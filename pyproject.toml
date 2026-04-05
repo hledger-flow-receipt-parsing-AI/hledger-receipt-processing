@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hledger-receipt-processing"
+version = "0.1.0"
+description = "Receipt image processing, labelling, and receipt-to-CSV matching"
+requires-python = ">=3.10"
+dependencies = [
+    "hledger-core>=0.1.0",
+    "hledger-config>=0.1.0",
+    "Pillow>=9.0",
+    "urwid>=2.1",
+    "typeguard>=2.13.3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 80
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+ignore_missing_imports = true
