@@ -99,11 +99,9 @@ def filter_transactions_by_amount(
     # Use search_receipt_account_transaction.amount_paid if original_receipt_account_transaction is not None
     # TODO: determine when you want to use the search receipt account transaction and when you
     # want to use the original receipt. Specifically, you should try to prevent overwriting the original receipt.
-    target_amount = (
+    target_amount = abs(
         action_dataset.search_receipt_account_transaction.tendered_amount_out
         - action_dataset.search_receipt_account_transaction.change_returned
-        # if original_receipt_account_transaction is not None
-        # else net_payed_amounts[receipt_account]
     )
 
     amount_range: float = action_dataset.config.matching_algo.amount_range
@@ -112,7 +110,7 @@ def filter_transactions_by_amount(
     )
     print(f"\nSearching for: {currency} {target_amount:.2f}")
     for transaction in yearly_transactions:
-        net_out = transaction.tendered_amount_out - transaction.change_returned
+        net_out = abs(transaction.tendered_amount_out - transaction.change_returned)
         if is_amount_within_margin(
             transaction_amount=net_out,
             receipt_amount=target_amount,
