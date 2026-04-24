@@ -13,6 +13,9 @@ from hledger_config.dir_reading_and_writing import (
 )
 from hledger_core.generics.enums import ClassifierType, LogicType
 from hledger_core.helper import assert_dir_exists, get_images_in_folder
+from hledger_receipt_processing.receipt_transaction_matching.read_receipt import (
+    normalize_raw_img_filepaths,
+)
 from hledger_receipt_processing.receipts_to_objects.make_receipt_labels import (
     export_human_label,
 )
@@ -69,13 +72,14 @@ def load_existing_receipt_labels_via_images(
         if os.path.isfile(path=label_filepath):
             with open(label_filepath, encoding=config.csv_encoding) as f:
                 receipt_data = json.load(f)
-                if "raw_img_filepath" not in receipt_data.keys():
-                    receipt_data["raw_img_filepath"] = raw_receipt_img_filepath
+                normalize_raw_img_filepaths(
+                    receipt_data, fallback=raw_receipt_img_filepath
+                )
                 if "config" in receipt_data.keys():
                     receipt_data.pop("config")
                 receipt = Receipt(
                     config=config, **receipt_data
-                )  # Assuming Receipt is a dataclass or similar
+                )
                 receipt_per_raw_img_filepath[
                     (raw_receipt_img_filepath, label_filepath)
                 ] = receipt
@@ -112,20 +116,25 @@ def load_receipts_from_dir(*, config: Config) -> List[Receipt]:
     )
 
     for label_filepath in label_files:
-        # input(f'label_filepath={label_filepath}')
         with open(label_filepath, encoding=config.csv_encoding) as f:
             receipt_data = json.load(f)
-            if "raw_img_filepath" not in receipt_data.keys():
+
+            has_filepath = (
+                "raw_img_filepath" in receipt_data
+                or "raw_img_filepaths" in receipt_data
+            )
+
+            if not has_filepath:
+                # Try to find the image path via the image-keyed receipts.
                 found_label: bool = False
                 for (
                     raw_receipt_img_filepath,
                     other_label_filepath,
                 ) in img_receipts.keys():
                     if label_filepath == other_label_filepath:
-                        # receipt_data
-                        receipt_data["raw_img_filepath"] = (
+                        receipt_data["raw_img_filepaths"] = [
                             raw_receipt_img_filepath
-                        )
+                        ]
                         if "config" in receipt_data.keys():
                             receipt_data.pop("config")
                         receipt = Receipt(config=config, **receipt_data)
@@ -137,6 +146,7 @@ def load_receipts_from_dir(*, config: Config) -> List[Receipt]:
                 if not found_label:
                     raise FileNotFoundError(f" did not find:{label_filepath}")
             else:
+                normalize_raw_img_filepaths(receipt_data)
                 if "config" in receipt_data.keys():
                     receipt_data.pop("config")
                 receipt = Receipt(config=config, **receipt_data)

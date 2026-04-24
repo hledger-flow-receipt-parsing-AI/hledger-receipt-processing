@@ -30,6 +30,30 @@ from hledger_core.TransactionObjects.Receipt import (
 from hledger_core.TransactionObjects.ShopId import ShopId
 
 
+def normalize_raw_img_filepaths(
+    data: dict, fallback: Optional[str] = None
+) -> None:
+    """Convert old ``raw_img_filepath`` key to ``raw_img_filepaths`` list in-place.
+
+    Handles three cases:
+    1. New format already present (``raw_img_filepaths``) — no-op.
+    2. Old format present (``raw_img_filepath``) — pop and wrap in list.
+    3. Neither present — use *fallback* if given, else raise.
+    """
+    if "raw_img_filepaths" in data:
+        return
+    old_val = data.pop("raw_img_filepath", None)
+    if old_val:
+        data["raw_img_filepaths"] = [old_val]
+    elif fallback:
+        data["raw_img_filepaths"] = [fallback]
+    else:
+        raise KeyError(
+            "No raw_img_filepath(s) found in receipt data and no fallback"
+            " provided"
+        )
+
+
 @typechecked
 def read_receipt_from_json(
     *,
@@ -94,12 +118,7 @@ def read_receipt_from_json(
         "net_returned_items"
     )
 
-    if "raw_img_filepath" not in converted_data.keys():
-        if not raw_receipt_img_filepath:
-            raise KeyError(
-                f"Did not find the {raw_receipt_img_filepath} in the receipt."
-            )
-        converted_data["raw_img_filepath"] = raw_receipt_img_filepath
+    normalize_raw_img_filepaths(converted_data, fallback=raw_receipt_img_filepath)
     if "config" in converted_data.keys():
         converted_data.pop("config")
         # Config is stored in receipt JSON but we use the provided config instead

@@ -89,7 +89,7 @@ def manually_make_receipt_labels(
             )
             receipt_label: Receipt = make_receipt_label(
                 config=config,
-                raw_receipt_img_filepath=raw_receipt_img_filepath,
+                raw_receipt_img_filepaths=[raw_receipt_img_filepath],
                 cropped_receipt_img_filepath=cropped_receipt_img_filepath,
                 hledger_account_infos=hledger_account_infos,
                 csv_transactions_per_account=csv_transactions_per_account,
@@ -121,7 +121,7 @@ def manually_make_receipt_labels(
 def ask_questions(
     *,
     config: Config,
-    raw_receipt_img_filepath: str,
+    raw_receipt_img_filepaths: List[str],
     hledger_account_infos: set[HledgerFlowAccountInfo],
     labelled_receipts: List[Receipt],
     prefilled_receipt: Optional[Receipt],
@@ -147,7 +147,7 @@ def ask_questions(
 
     return build_receipt_from_urwid(
         config=config,
-        raw_receipt_img_filepath=raw_receipt_img_filepath,
+        raw_receipt_img_filepaths=raw_receipt_img_filepaths,
         hledger_account_infos=hledger_account_infos,
         accounts_without_csv=accounts_without_csv,
         labelled_receipts=labelled_receipts,
@@ -283,7 +283,7 @@ def export_human_label(
 def make_receipt_label(
     *,
     config: Config,
-    raw_receipt_img_filepath: str,
+    raw_receipt_img_filepaths: List[str],
     cropped_receipt_img_filepath: str,
     hledger_account_infos: set[HledgerFlowAccountInfo],
     receipt_nr: int,
@@ -298,11 +298,10 @@ def make_receipt_label(
     Opens an image, asks the user questions about it, and returns the answers.
 
     Args:
-        img_filepath: The path to the image file.
+        raw_receipt_img_filepaths: List of raw image paths for this receipt.
 
     Returns:
-        A dictionary containing the user's answers to the questions.
-        Returns None if there is an issue opening the image.
+        A Receipt object built from the user's TUI answers.
     """
 
     from matplotlib import pyplot as plt
@@ -315,7 +314,7 @@ def make_receipt_label(
             "Cropped receipt image not found:"
             f" {cropped_receipt_img_filepath}\nPlease run the image cropping"
             " step first (rotate and crop the receipt images).\nRaw image"
-            f" path: {raw_receipt_img_filepath}"
+            f" path: {raw_receipt_img_filepaths[0]}"
         )
 
     tensor_img = io.read_file(cropped_receipt_img_filepath)
@@ -351,7 +350,7 @@ def make_receipt_label(
         config=config,
         hledger_account_infos=hledger_account_infos,
         labelled_receipts=labelled_receipts,
-        raw_receipt_img_filepath=raw_receipt_img_filepath,
+        raw_receipt_img_filepaths=raw_receipt_img_filepaths,
         prefilled_receipt=prefilled_receipt,
         csv_transactions_per_account=csv_transactions_per_account,
     )
