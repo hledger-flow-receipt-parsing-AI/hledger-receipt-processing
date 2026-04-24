@@ -88,7 +88,7 @@ def prompt_user_for_no_matches(
         # Load receipt image, load receipt.
         modified_receipt: Receipt = make_receipt_label(
             config=action_dataset.config,
-            raw_receipt_img_filepath=action_dataset.receipt.raw_img_filepath,
+            raw_receipt_img_filepaths=action_dataset.receipt.raw_img_filepaths,
             cropped_receipt_img_filepath=cropped_receipt_img_filepath,
             hledger_account_infos=get_all_accounts(
                 config=action_dataset.config,
