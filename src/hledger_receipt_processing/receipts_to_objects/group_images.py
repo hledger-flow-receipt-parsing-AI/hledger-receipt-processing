@@ -85,16 +85,33 @@ def load_image_grouping(*, config: Config) -> Optional[List[List[str]]]:
         return None
     with open(filepath, encoding="utf-8") as f:
         groups: List[List[str]] = json.load(f)
-    # Validate all referenced files still exist.
+    # Filter out files that no longer exist instead of discarding the
+    # entire grouping.  This preserves valid groups when only some
+    # images have been removed.
+    cleaned: List[List[str]] = []
+    stale_count = 0
     for group in groups:
-        for img_path in group:
-            if not os.path.isfile(img_path):
-                log.warning(
-                    "Stale grouping: %s no longer exists. Re-grouping.", img_path
-                )
-                return None
-    log.info("Loaded saved image grouping (%d groups) from %s", len(groups), filepath)
-    return groups
+        valid = [p for p in group if os.path.isfile(p)]
+        removed = len(group) - len(valid)
+        if removed:
+            stale_count += removed
+            for p in group:
+                if not os.path.isfile(p):
+                    log.warning("Stale grouping entry removed: %s", p)
+        if valid:
+            cleaned.append(valid)
+    if stale_count:
+        log.info(
+            "Removed %d stale path(s) from saved grouping.", stale_count
+        )
+    if not cleaned:
+        return None
+    log.info(
+        "Loaded saved image grouping (%d groups) from %s",
+        len(cleaned),
+        filepath,
+    )
+    return cleaned
 
 
 # ------------------------------------------------------------------
