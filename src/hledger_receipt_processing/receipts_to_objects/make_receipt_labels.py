@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import threading
 import tkinter as tk
 from dataclasses import asdict
 from datetime import datetime
@@ -56,6 +57,43 @@ def manually_make_receipt_labels(
     """
     receipts: Dict[str, Receipt] = {}
 
+    # Pre-load account data AND the heavy TUI module tree in background
+    # threads so they are ready by the time the user finishes looking at
+    # the receipt image.  Both tasks run concurrently while the image is
+    # displayed and the user confirms they can see it.
+    _accounts_result: List = []  # mutable container for thread result
+    _accounts_error: List = []
+
+    def _load_accounts() -> None:
+        try:
+            result = get_all_accounts(
+                config=config,
+                labelled_receipts=labelled_receipts,
+            )
+            _accounts_result.append(result)
+        except Exception as exc:
+            _accounts_error.append(exc)
+
+    _tui_module: List = []  # holds the pre-imported module
+
+    def _preload_tui_import() -> None:
+        try:
+            from tui_labeller.tuis.urwid.ask_urwid_receipt import (  # noqa: F401,E501
+                build_receipt_from_urwid,
+            )
+            _tui_module.append(build_receipt_from_urwid)
+        except Exception:
+            pass  # will fall back to lazy import in ask_questions()
+
+    accounts_thread = threading.Thread(
+        target=_load_accounts, daemon=True
+    )
+    tui_thread = threading.Thread(
+        target=_preload_tui_import, daemon=True
+    )
+    accounts_thread.start()
+    tui_thread.start()
+
     for receipt_nr, image_group in enumerate(image_groups):
         primary_img = image_group[0]
         cropped_receipt_img_filepath: str = raw_receipt_img_filepath_to_cropped(
@@ -77,21 +115,19 @@ def manually_make_receipt_labels(
 
         if not os.path.isfile(label_filepath):
 
-            hledger_account_infos, csv_transactions_per_account = (
-                get_all_accounts(
-                    config=config,
-                    labelled_receipts=labelled_receipts,
-                )
-            )
             receipt_label: Receipt = make_receipt_label(
                 config=config,
                 raw_receipt_img_filepaths=image_group,
                 cropped_receipt_img_filepath=cropped_receipt_img_filepath,
-                hledger_account_infos=hledger_account_infos,
-                csv_transactions_per_account=csv_transactions_per_account,
                 receipt_nr=receipt_nr,
                 total_nr_of_receipts=len(image_groups),
                 labelled_receipts=labelled_receipts,
+                # Pass background loaders so make_receipt_label can join
+                # them AFTER the "can you see?" prompt, not before.
+                _accounts_thread=accounts_thread,
+                _accounts_result=_accounts_result,
+                _accounts_error=_accounts_error,
+                _tui_thread=tui_thread,
             )
             # Map ALL images in the group to the same receipt.
             for img_path in image_group:
@@ -284,14 +320,16 @@ def make_receipt_label(
     config: Config,
     raw_receipt_img_filepaths: List[str],
     cropped_receipt_img_filepath: str,
-    hledger_account_infos: set[HledgerFlowAccountInfo],
     receipt_nr: int,
     total_nr_of_receipts: int,
     labelled_receipts: List[Receipt],
     prefilled_receipt: Optional[Receipt] = None,
-    csv_transactions_per_account: Optional[
-        Dict[AccountConfig, Dict[int, List[Transaction]]]
-    ] = None,
+    # Background loaders — joined AFTER the "can you see?" prompt so the
+    # user's inspection time overlaps with loading.
+    _accounts_thread: Optional[threading.Thread] = None,
+    _accounts_result: Optional[List] = None,
+    _accounts_error: Optional[List] = None,
+    _tui_thread: Optional[threading.Thread] = None,
 ) -> Receipt:
     """
     Opens an image, asks the user questions about it, and returns the answers.
@@ -302,7 +340,6 @@ def make_receipt_label(
     Returns:
         A Receipt object built from the user's TUI answers.
     """
-
     from matplotlib import pyplot as plt
     from tensorflow import image as img
     from tensorflow import io
@@ -345,6 +382,26 @@ def make_receipt_label(
         f"({receipt_nr}/{total_nr_of_receipts}) Can you"
         f" see:{cropped_receipt_img_filepath} (Press [enter] for yes)?"
     )
+
+    # Now that the user has confirmed they can see the image, block on
+    # the background loaders.  The loading ran concurrently while the
+    # image was being displayed and the user was looking at it.
+    if _accounts_thread is not None:
+        _accounts_thread.join()
+    if _accounts_error:
+        raise _accounts_error[0]
+    if _tui_thread is not None:
+        _tui_thread.join()
+
+    hledger_account_infos: set[HledgerFlowAccountInfo] = set()
+    csv_transactions_per_account: Optional[
+        Dict[AccountConfig, Dict[int, List[Transaction]]]
+    ] = None
+    if _accounts_result:
+        hledger_account_infos, csv_transactions_per_account = (
+            _accounts_result[0]
+        )
+
     receipt: Receipt = ask_questions(
         config=config,
         hledger_account_infos=hledger_account_infos,
