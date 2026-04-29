@@ -185,7 +185,7 @@ def interactive_group_images(
     n — new receipt (start a new group with this image as prime)
     g — group with previous (add to current group as secondary)
     p — prime & group (add to current group AND make this image the prime)
-    s — skip (exclude this image)
+    x — skip / exclude this image
     q / Escape — quit (abort grouping, save progress so far)
 
     Grouping is saved to disk after every decision so progress survives
@@ -248,7 +248,7 @@ def interactive_group_images(
         help_parts = ["(n)ew receipt"]
         if current_group:
             help_parts += ["(g)roup with prev", "(p)rime & group"]
-        help_parts.append("(s)kip  |  (q)uit")
+        help_parts.append("e(x)clude  |  (q)uit")
         help_text = "  |  ".join(help_parts)
 
         fig.text(
@@ -271,7 +271,7 @@ def interactive_group_images(
                 key_result[0] = "q"
                 plt.close(fig)
                 return
-            valid = {"n", "s"}
+            valid = {"n", "x"}
             if _current_group:
                 valid |= {"g", "p"}
             if key in valid:
@@ -313,9 +313,9 @@ def interactive_group_images(
             current_group.append(img_path)
         elif choice == "p":
             current_group.insert(0, img_path)
-        elif choice == "s":
-            log.info("Skipped: %s", os.path.basename(img_path))
-            print(f"  Skipped: {os.path.basename(img_path)}")
+        elif choice == "x":
+            log.info("Excluded: %s", os.path.basename(img_path))
+            print(f"  Excluded: {os.path.basename(img_path)}")
 
         # Save after every decision so progress survives Ctrl-C
         partial = groups + ([current_group] if current_group else [])
