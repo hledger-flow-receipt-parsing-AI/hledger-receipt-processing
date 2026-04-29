@@ -390,7 +390,7 @@ def group_receipt_images(
             f"\n{len(unique_images)} unique image(s) to review interactively."
         )
         print("Keys on the image window: (n)ew receipt, (g)roup with prev,")
-        print("  (p)rime & group, (s)kip, (q)uit/Esc.\n")
+        print("  (p)rime & group, e(x)clude, (q)uit/Esc.\n")
         try:
             interactive_groups = interactive_group_images(
                 config=config, image_paths=unique_images
