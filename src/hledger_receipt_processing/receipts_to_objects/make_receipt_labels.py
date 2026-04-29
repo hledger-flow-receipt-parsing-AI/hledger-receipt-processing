@@ -96,25 +96,43 @@ def manually_make_receipt_labels(
 
     import time as _loop_time
 
+    from hledger_receipt_processing.receipts_to_objects.group_images import (
+        get_labelled_raw_paths,
+    )
+
+    # Build a fast raw-path → label-filepath lookup once (scans label
+    # JSONs instead of hashing every cropped image).
+    labelled_map = get_labelled_raw_paths(config=config)
+
     _loop_prev = _loop_time.monotonic()
     for receipt_nr, image_group in enumerate(image_groups):
         primary_img = image_group[0]
-        cropped_receipt_img_filepath: str = raw_receipt_img_filepath_to_cropped(
-            config=config, raw_receipt_img_filepath=primary_img
-        )
 
-        receipt_folder_path: str = find_receipt_folder_path(
-            dataset_path=config.dir_paths.get_path(
-                "receipt_labels_dir", absolute=True
-            ),
-            cropped_receipt_img_filepath=cropped_receipt_img_filepath,
-        )
-
-        label_filename: str = (
-            f"{str(ClassifierType.RECEIPT_IMAGE_TO_OBJ.value)}_{str(LogicType.LABEL.value)}.json"
-        )
-
-        label_filepath: str = os.path.join(receipt_folder_path, label_filename)
+        # Check if this image already has a label.
+        # Try the pre-built cache first (handles stale hashes too).
+        existing_label_filepath = labelled_map.get(primary_img)
+        if existing_label_filepath is None:
+            # Cache miss — fall back to the hash-based lookup.
+            cropped_receipt_img_filepath: str = (
+                raw_receipt_img_filepath_to_cropped(
+                    config=config, raw_receipt_img_filepath=primary_img
+                )
+            )
+            receipt_folder_path: str = find_receipt_folder_path(
+                dataset_path=config.dir_paths.get_path(
+                    "receipt_labels_dir", absolute=True
+                ),
+                cropped_receipt_img_filepath=cropped_receipt_img_filepath,
+            )
+            label_filename: str = (
+                f"{str(ClassifierType.RECEIPT_IMAGE_TO_OBJ.value)}"
+                f"_{str(LogicType.LABEL.value)}.json"
+            )
+            label_filepath: str = os.path.join(
+                receipt_folder_path, label_filename
+            )
+        else:
+            label_filepath = existing_label_filepath
 
         if not os.path.isfile(label_filepath):
             _t_before_label = _loop_time.monotonic()
@@ -123,6 +141,31 @@ def manually_make_receipt_labels(
                 print(
                     f"  [timing] loop overhead before receipt"
                     f" {receipt_nr}: {_elapsed_since_prev:.1f}s"
+                )
+
+            # Ensure cropped path is available (may not be set if
+            # the cache had a stale entry).
+            if existing_label_filepath is not None:
+                cropped_receipt_img_filepath = (
+                    raw_receipt_img_filepath_to_cropped(
+                        config=config,
+                        raw_receipt_img_filepath=primary_img,
+                    )
+                )
+                receipt_folder_path = find_receipt_folder_path(
+                    dataset_path=config.dir_paths.get_path(
+                        "receipt_labels_dir", absolute=True
+                    ),
+                    cropped_receipt_img_filepath=(
+                        cropped_receipt_img_filepath
+                    ),
+                )
+                label_filename = (
+                    f"{str(ClassifierType.RECEIPT_IMAGE_TO_OBJ.value)}"
+                    f"_{str(LogicType.LABEL.value)}.json"
+                )
+                label_filepath = os.path.join(
+                    receipt_folder_path, label_filename
                 )
 
             receipt_label: Receipt = make_receipt_label(
