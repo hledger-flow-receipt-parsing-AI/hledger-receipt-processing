@@ -108,9 +108,14 @@ def manually_make_receipt_labels(
     for receipt_nr, image_group in enumerate(image_groups):
         primary_img = image_group[0]
 
-        # Check if this image already has a label.
-        # Try the pre-built cache first (handles stale hashes too).
-        existing_label_filepath = labelled_map.get(primary_img)
+        # Check if ANY image in the group already has a label.
+        # The label may reference a different group member than the
+        # current prime (index 0), so check all members.
+        existing_label_filepath = None
+        for img_path in image_group:
+            existing_label_filepath = labelled_map.get(img_path)
+            if existing_label_filepath is not None:
+                break
         if existing_label_filepath is None:
             # Cache miss — fall back to the hash-based lookup.
             cropped_receipt_img_filepath: str = (
