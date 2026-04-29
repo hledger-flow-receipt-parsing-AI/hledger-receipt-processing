@@ -94,6 +94,9 @@ def manually_make_receipt_labels(
     accounts_thread.start()
     tui_thread.start()
 
+    import time as _loop_time
+
+    _loop_prev = _loop_time.monotonic()
     for receipt_nr, image_group in enumerate(image_groups):
         primary_img = image_group[0]
         cropped_receipt_img_filepath: str = raw_receipt_img_filepath_to_cropped(
@@ -114,6 +117,13 @@ def manually_make_receipt_labels(
         label_filepath: str = os.path.join(receipt_folder_path, label_filename)
 
         if not os.path.isfile(label_filepath):
+            _t_before_label = _loop_time.monotonic()
+            _elapsed_since_prev = _t_before_label - _loop_prev
+            if _elapsed_since_prev > 0.5:
+                print(
+                    f"  [timing] loop overhead before receipt"
+                    f" {receipt_nr}: {_elapsed_since_prev:.1f}s"
+                )
 
             receipt_label: Receipt = make_receipt_label(
                 config=config,
@@ -133,12 +143,20 @@ def manually_make_receipt_labels(
             for img_path in image_group:
                 receipts[img_path] = receipt_label
             # Store the manually generated receipt label.
+            _t_export_start = _loop_time.monotonic()
             export_human_label(
                 receipt=receipt_label,
                 label_filepath=label_filepath,
                 verbose=verbose,
             )
+            _t_export_end = _loop_time.monotonic()
+            if _t_export_end - _t_export_start > 0.5:
+                print(
+                    f"  [timing] export_human_label:"
+                    f" {_t_export_end - _t_export_start:.1f}s"
+                )
             print(f"Saved manual label to:\n{label_filepath}")
+            _loop_prev = _loop_time.monotonic()
         else:
             receipt_label: Receipt = read_receipt_from_json(
                 config=config,
@@ -340,6 +358,10 @@ def make_receipt_label(
     Returns:
         A Receipt object built from the user's TUI answers.
     """
+    import time as _time
+
+    _img_t0 = _time.monotonic()
+
     from matplotlib import pyplot as plt
     from tensorflow import image as img
     from tensorflow import io
@@ -353,8 +375,11 @@ def make_receipt_label(
             f" path: {raw_receipt_img_filepaths[0]}"
         )
 
+    _img_t1 = _time.monotonic()
     tensor_img = io.read_file(cropped_receipt_img_filepath)
     tensor_img = img.decode_png(tensor_img, channels=3)
+
+    _img_t2 = _time.monotonic()
 
     plt.style.use("dark_background")
     plt.ion()
@@ -378,10 +403,20 @@ def make_receipt_label(
     root = tk.Tk()  # TODO: See if you can delete.
     root.withdraw()  # TODO: See if you can delete.
 
+    _img_t3 = _time.monotonic()
+    print(
+        f"  [timing] image display: imports={_img_t1 - _img_t0:.1f}s"
+        f" tf_load={_img_t2 - _img_t1:.1f}s"
+        f" matplotlib={_img_t3 - _img_t2:.1f}s"
+        f" total={_img_t3 - _img_t0:.1f}s"
+    )
+
     input(
         f"({receipt_nr}/{total_nr_of_receipts}) Can you"
         f" see:{cropped_receipt_img_filepath} (Press [enter] for yes)?"
     )
+
+    _t0 = _time.monotonic()
 
     # Now that the user has confirmed they can see the image, block on
     # the background loaders.  The loading ran concurrently while the
@@ -392,6 +427,9 @@ def make_receipt_label(
         raise _accounts_error[0]
     if _tui_thread is not None:
         _tui_thread.join()
+
+    _t1 = _time.monotonic()
+    print(f"  [timing] background joins: {_t1 - _t0:.1f}s")
 
     hledger_account_infos: set[HledgerFlowAccountInfo] = set()
     csv_transactions_per_account: Optional[
@@ -410,6 +448,8 @@ def make_receipt_label(
         prefilled_receipt=prefilled_receipt,
         csv_transactions_per_account=csv_transactions_per_account,
     )
+    _t2 = _time.monotonic()
+    print(f"  [timing] ask_questions (total): {_t2 - _t1:.1f}s")
 
     plt.close()
     plt.ioff()
