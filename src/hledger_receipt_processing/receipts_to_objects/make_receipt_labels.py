@@ -43,35 +43,31 @@ from hledger_core.TransactionObjects.Receipt import Receipt
 def manually_make_receipt_labels(
     *,
     config: Config,
-    raw_receipt_img_filepaths: List[str],
+    image_groups: List[List[str]],
     labelled_receipts: List[Receipt],
     verbose: bool,
 ) -> Dict[str, Receipt]:
+    """Label receipt image groups.
+
+    Each element of *image_groups* is a list of image paths that belong
+    to the same receipt.  Index 0 is the **prime** image used for
+    cropping/display.  Only the prime image is shown in the TUI; all
+    images in the group are mapped to the same Receipt object.
+    """
     receipts: Dict[str, Receipt] = {}
 
-    for receipt_nr, raw_receipt_img_filepath in enumerate(
-        raw_receipt_img_filepaths
-    ):
+    for receipt_nr, image_group in enumerate(image_groups):
+        primary_img = image_group[0]
         cropped_receipt_img_filepath: str = raw_receipt_img_filepath_to_cropped(
-            config=config, raw_receipt_img_filepath=raw_receipt_img_filepath
+            config=config, raw_receipt_img_filepath=primary_img
         )
 
-        # receipt_folder_path: str = create_image_folder(
-        #     dataset_path=config.dir_paths.get_path(
-        #         "receipt_labels_dir", absolute=True
-        #     ),
-        #     cropped_receipt_img_filepath=cropped_receipt_img_filepath,
-        # )
         receipt_folder_path: str = find_receipt_folder_path(
             dataset_path=config.dir_paths.get_path(
                 "receipt_labels_dir", absolute=True
             ),
             cropped_receipt_img_filepath=cropped_receipt_img_filepath,
         )
-
-        # label_filepath: str = os.path.join(receipt_folder_path, "receipt_image_to_obj_label.json")
-
-        # if not os.path.isfile(label_filepath):
 
         label_filename: str = (
             f"{str(ClassifierType.RECEIPT_IMAGE_TO_OBJ.value)}_{str(LogicType.LABEL.value)}.json"
@@ -89,15 +85,17 @@ def manually_make_receipt_labels(
             )
             receipt_label: Receipt = make_receipt_label(
                 config=config,
-                raw_receipt_img_filepaths=[raw_receipt_img_filepath],
+                raw_receipt_img_filepaths=image_group,
                 cropped_receipt_img_filepath=cropped_receipt_img_filepath,
                 hledger_account_infos=hledger_account_infos,
                 csv_transactions_per_account=csv_transactions_per_account,
                 receipt_nr=receipt_nr,
-                total_nr_of_receipts=len(raw_receipt_img_filepaths),
+                total_nr_of_receipts=len(image_groups),
                 labelled_receipts=labelled_receipts,
             )
-            receipts[raw_receipt_img_filepath] = receipt_label
+            # Map ALL images in the group to the same receipt.
+            for img_path in image_group:
+                receipts[img_path] = receipt_label
             # Store the manually generated receipt label.
             export_human_label(
                 receipt=receipt_label,
@@ -110,9 +108,10 @@ def manually_make_receipt_labels(
                 config=config,
                 label_filepath=label_filepath,
                 verbose=verbose,
-                raw_receipt_img_filepath=raw_receipt_img_filepath,
+                raw_receipt_img_filepath=primary_img,
             )
-            receipts[raw_receipt_img_filepath] = receipt_label
+            for img_path in image_group:
+                receipts[img_path] = receipt_label
 
     return receipts
 
