@@ -41,10 +41,13 @@ def _label_filename() -> str:
 
 
 @typechecked
-def _build_labelled_raw_paths(*, config: Config) -> Dict[str, str]:
+def build_labelled_raw_paths(*, config: Config) -> Dict[str, str]:
     """Scan all label JSONs and return a mapping of raw image path →
-    label filepath.  This handles the case where a cropped image was
-    re-created (changing its hash) so the fast hash-based lookup fails.
+    label filepath.
+
+    This handles the case where a cropped image was re-created (changing
+    its hash) so the hash-based lookup in ``image_has_label`` would fail.
+    No caching — always returns a fresh result.
     """
     labels_dir = config.dir_paths.get_path("receipt_labels_dir", absolute=True)
     if not os.path.isdir(labels_dir):
@@ -66,22 +69,6 @@ def _build_labelled_raw_paths(*, config: Config) -> Dict[str, str]:
         except (json.JSONDecodeError, OSError):
             continue
     return result
-
-
-# Module-level cache so we scan labels at most once per process.
-_labelled_raw_paths_cache: Optional[Dict[str, str]] = None
-
-
-@typechecked
-def get_labelled_raw_paths(*, config: Config) -> Dict[str, str]:
-    """Return cached mapping of raw image path → label filepath.
-
-    The cache is built once per process by scanning all label JSONs.
-    """
-    global _labelled_raw_paths_cache  # noqa: PLW0603
-    if _labelled_raw_paths_cache is None:
-        _labelled_raw_paths_cache = _build_labelled_raw_paths(config=config)
-    return _labelled_raw_paths_cache
 
 
 @typechecked
@@ -106,7 +93,7 @@ def image_has_label(*, config: Config, raw_img_filepath: str) -> bool:
 
     # Slow path: the cropped image may have been re-created (hash
     # changed).  Fall back to scanning label JSONs for raw_img_filepaths.
-    return raw_img_filepath in get_labelled_raw_paths(config=config)
+    return raw_img_filepath in build_labelled_raw_paths(config=config)
 
 
 # ------------------------------------------------------------------

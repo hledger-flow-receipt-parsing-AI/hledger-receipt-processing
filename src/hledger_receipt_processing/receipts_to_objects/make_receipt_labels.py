@@ -97,12 +97,13 @@ def manually_make_receipt_labels(
     import time as _loop_time
 
     from hledger_receipt_processing.receipts_to_objects.group_images import (
-        get_labelled_raw_paths,
+        build_labelled_raw_paths,
     )
 
-    # Build a fast raw-path → label-filepath lookup once (scans label
-    # JSONs instead of hashing every cropped image).
-    labelled_map = get_labelled_raw_paths(config=config)
+    # Build a raw-path → label-filepath lookup once before the loop.
+    # This scans label JSONs instead of hashing every cropped image,
+    # and handles stale hashes from re-cropped images.
+    labelled_map = build_labelled_raw_paths(config=config)
 
     _loop_prev = _loop_time.monotonic()
     for receipt_nr, image_group in enumerate(image_groups):
