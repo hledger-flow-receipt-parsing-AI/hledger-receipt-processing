@@ -409,11 +409,16 @@ def make_receipt_label(
     """
     import time as _time
 
-    _img_t0 = _time.monotonic()
+    # Headless mode (set by the scenario harness / CI via the
+    # HLEDGER_PREPROCESSOR_HEADLESS env var) skips the matplotlib image
+    # preview and its heavy tensorflow PNG-decode dependency.  The preview is
+    # purely cosmetic — it lets an interactive user look at the receipt while
+    # answering — so skipping it does not change the produced label.  The
+    # "Can you see …" prompt is kept so pexpect-driven runs (tests, GIF
+    # recording) advance through exactly the same steps.
+    _headless: bool = bool(os.environ.get("HLEDGER_PREPROCESSOR_HEADLESS"))
 
-    from matplotlib import pyplot as plt
-    from tensorflow import image as img
-    from tensorflow import io
+    _img_t0 = _time.monotonic()
 
     # Validate cropped image exists before attempting to load
     if not os.path.isfile(cropped_receipt_img_filepath):
@@ -424,41 +429,48 @@ def make_receipt_label(
             f" path: {raw_receipt_img_filepaths[0]}"
         )
 
-    _img_t1 = _time.monotonic()
-    tensor_img = io.read_file(cropped_receipt_img_filepath)
-    tensor_img = img.decode_png(tensor_img, channels=3)
+    plt = None
+    root = None
+    if not _headless:
+        from matplotlib import pyplot as plt
+        from tensorflow import image as img
+        from tensorflow import io
 
-    _img_t2 = _time.monotonic()
+        _img_t1 = _time.monotonic()
+        tensor_img = io.read_file(cropped_receipt_img_filepath)
+        tensor_img = img.decode_png(tensor_img, channels=3)
 
-    plt.style.use("dark_background")
-    plt.ion()
+        _img_t2 = _time.monotonic()
 
-    # For some reason this code attempts to rotate the images. Prevent that.
-    # rotated_img = img.rot90(tensor_img, k=nr_of_quarter_turns_cw)
-    img_array = tensor_img.numpy()
-    plt.figure()
-    plt.imshow(img_array, origin="upper")
-    plt.title(f"Answer the questions about this receipt in the CLI/TUI")
-    plt.axis("off")
-    plt.subplots_adjust(bottom=0, top=1, left=0, right=1)
+        plt.style.use("dark_background")
+        plt.ion()
 
-    # Maximize the figure window
-    fig_manager = plt.get_current_fig_manager()
-    fig_manager.window.attributes(
-        "-zoomed", True
-    )  # Works on Linux with Tk backend
+        # For some reason this code attempts to rotate the images. Prevent that.
+        # rotated_img = img.rot90(tensor_img, k=nr_of_quarter_turns_cw)
+        img_array = tensor_img.numpy()
+        plt.figure()
+        plt.imshow(img_array, origin="upper")
+        plt.title(f"Answer the questions about this receipt in the CLI/TUI")
+        plt.axis("off")
+        plt.subplots_adjust(bottom=0, top=1, left=0, right=1)
 
-    # Allow closing the image afterwards.
-    root = tk.Tk()  # TODO: See if you can delete.
-    root.withdraw()  # TODO: See if you can delete.
+        # Maximize the figure window
+        fig_manager = plt.get_current_fig_manager()
+        fig_manager.window.attributes(
+            "-zoomed", True
+        )  # Works on Linux with Tk backend
 
-    _img_t3 = _time.monotonic()
-    print(
-        f"  [timing] image display: imports={_img_t1 - _img_t0:.1f}s"
-        f" tf_load={_img_t2 - _img_t1:.1f}s"
-        f" matplotlib={_img_t3 - _img_t2:.1f}s"
-        f" total={_img_t3 - _img_t0:.1f}s"
-    )
+        # Allow closing the image afterwards.
+        root = tk.Tk()  # TODO: See if you can delete.
+        root.withdraw()  # TODO: See if you can delete.
+
+        _img_t3 = _time.monotonic()
+        print(
+            f"  [timing] image display: imports={_img_t1 - _img_t0:.1f}s"
+            f" tf_load={_img_t2 - _img_t1:.1f}s"
+            f" matplotlib={_img_t3 - _img_t2:.1f}s"
+            f" total={_img_t3 - _img_t0:.1f}s"
+        )
 
     input(
         f"({receipt_nr}/{total_nr_of_receipts}) Can you"
@@ -500,7 +512,9 @@ def make_receipt_label(
     _t2 = _time.monotonic()
     print(f"  [timing] ask_questions (total): {_t2 - _t1:.1f}s")
 
-    plt.close()
-    plt.ioff()
-    root.destroy()  # TODO: See if you can delete.
+    if not _headless and plt is not None:
+        plt.close()
+        plt.ioff()
+    if not _headless and root is not None:
+        root.destroy()  # TODO: See if you can delete.
     return receipt
