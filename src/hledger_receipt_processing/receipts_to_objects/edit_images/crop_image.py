@@ -20,6 +20,27 @@ from hledger_core.TransactionObjects.Receipt import (  # For image handling
     Receipt,
 )
 
+# cv2.waitKeyEx reports special keys as X11 keysyms in the low 16 bits on
+# Linux, and as Win32 virtual-key codes shifted left by 16 bits on Windows.
+_SPECIAL_KEYS = {
+    0xFF51: "left",
+    0xFF52: "up",
+    0xFF53: "right",
+    0xFF54: "down",
+    0xFF50: "home",
+    0xFF57: "end",
+    0x250000: "left",
+    0x260000: "up",
+    0x270000: "right",
+    0x280000: "down",
+    0x240000: "home",
+    0x230000: "end",
+}
+
+
+def _special_key(key: int) -> Union[str, None]:
+    return _SPECIAL_KEYS.get(key & 0xFFFF) or _SPECIAL_KEYS.get(key & 0xFF0000)
+
 
 def crop_and_save_image(
     *,
@@ -91,7 +112,8 @@ def crop_and_save_image(
     )
 
     print(
-        "Commands: 0-9 (enter coordinate value), Alt (switch active corner),"
+        "Commands: 0-9 (enter coordinate value), Alt/Tab (switch active"
+        " corner),"
         " Arrows (move active corner 10%), Home/End (switch coordinate for"
         " input), Enter (save crop), 'q' (quit)"
     )
@@ -122,6 +144,7 @@ def crop_and_save_image(
 
             key = cv2.waitKeyEx(0)
             key_code = key & 0xFFFF
+            special_key = _special_key(key)
 
             if key == 65513 or key == 65514:  # Left or Right Alt pressed
                 alt_pressed = True
@@ -176,7 +199,7 @@ def crop_and_save_image(
                 except ValueError:
                     print("Invalid input. Enter a number between 0 and 1.")
                     input_value = ""
-            elif key_code == 0xFF51:  # Left arrow
+            elif special_key == "left":  # Left arrow
                 if active_corner == 0:
                     crop_coords[0] = max(crop_coords[0] - 0.1, 0.0)
                     print(f"Adjusted x1 to {crop_coords[0]:.2f} (Left)")
@@ -185,7 +208,7 @@ def crop_and_save_image(
                         crop_coords[2] - 0.1, crop_coords[0] + 0.01
                     )
                     print(f"Adjusted x2 to {crop_coords[2]:.2f} (Left)")
-            elif key_code == 0xFF53:  # Right arrow
+            elif special_key == "right":  # Right arrow
                 if active_corner == 0:
                     crop_coords[0] = min(
                         crop_coords[0] + 0.1, crop_coords[2] - 0.01
@@ -194,7 +217,7 @@ def crop_and_save_image(
                 else:
                     crop_coords[2] = min(crop_coords[2] + 0.1, 1.0)
                     print(f"Adjusted x2 to {crop_coords[2]:.2f} (Right)")
-            elif key_code == 0xFF52:  # Up arrow
+            elif special_key == "up":  # Up arrow
                 if active_corner == 0:
                     crop_coords[1] = max(crop_coords[1] - 0.1, 0.0)
                     print(f"Adjusted y1 to {crop_coords[1]:.2f} (Up)")
@@ -203,7 +226,7 @@ def crop_and_save_image(
                         crop_coords[3] - 0.1, crop_coords[1] + 0.01
                     )
                     print(f"Adjusted y2 to {crop_coords[3]:.2f} (Up)")
-            elif key_code == 0xFF54:  # Down arrow
+            elif special_key == "down":  # Down arrow
                 if active_corner == 0:
                     crop_coords[1] = min(
                         crop_coords[1] + 0.1, crop_coords[3] - 0.01
@@ -212,15 +235,16 @@ def crop_and_save_image(
                 else:
                     crop_coords[3] = min(crop_coords[3] + 0.1, 1.0)
                     print(f"Adjusted y2 to {crop_coords[3]:.2f} (Down)")
-            elif key_code == 0xFF50:  # Home
+            elif special_key == "home":  # Home
                 current_coord = (current_coord - 1) % 4
                 input_value = ""
                 print(f"Editing {['x1', 'y1', 'x2', 'y2'][current_coord]}")
-            elif key_code == 0xFF57:  # End
+            elif special_key == "end":  # End
                 current_coord = (current_coord + 1) % 4
                 input_value = ""
                 print(f"Editing {['x1', 'y1', 'x2', 'y2'][current_coord]}")
-            elif alt_pressed:
+            # Alt never reaches waitKeyEx on Windows; Tab works everywhere.
+            elif alt_pressed or key_code == 9:
                 active_corner = 1 - active_corner  # Switch between 0 and 1
                 print(
                     "Switched to"
