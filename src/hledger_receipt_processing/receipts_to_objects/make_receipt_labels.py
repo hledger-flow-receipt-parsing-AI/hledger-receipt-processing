@@ -39,6 +39,9 @@ from hledger_core.TransactionObjects.Account import Account
 from hledger_core.TransactionObjects.AssetType import AssetType
 from hledger_core.TransactionObjects.Posting import TransactionCode
 from hledger_core.TransactionObjects.Receipt import Receipt
+from hledger_receipt_processing.receipts_to_objects.preload_threads import (
+    start_preload_threads,
+)
 
 
 @typechecked
@@ -86,14 +89,9 @@ def manually_make_receipt_labels(
         except Exception:
             pass  # will fall back to lazy import in ask_questions()
 
-    accounts_thread = threading.Thread(
-        target=_load_accounts, daemon=True
+    accounts_thread, tui_thread = start_preload_threads(
+        _load_accounts, _preload_tui_import
     )
-    tui_thread = threading.Thread(
-        target=_preload_tui_import, daemon=True
-    )
-    accounts_thread.start()
-    tui_thread.start()
 
     import time as _loop_time
 
