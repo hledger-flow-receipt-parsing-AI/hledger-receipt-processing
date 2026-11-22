@@ -42,6 +42,10 @@ from hledger_core.TransactionObjects.Receipt import Receipt
 from hledger_receipt_processing.receipts_to_objects.preload_threads import (
     start_preload_threads,
 )
+from hledger_receipt_processing.receipts_to_objects.receipt_not_mine import (
+    ReceiptNotMine,
+    handle_receipt_not_mine,
+)
 
 
 @typechecked
@@ -173,20 +177,34 @@ def manually_make_receipt_labels(
                     receipt_folder_path, label_filename
                 )
 
-            receipt_label: Receipt = make_receipt_label(
-                config=config,
-                raw_receipt_img_filepaths=image_group,
-                cropped_receipt_img_filepath=cropped_receipt_img_filepath,
-                receipt_nr=receipt_nr,
-                total_nr_of_receipts=len(image_groups),
-                labelled_receipts=labelled_receipts,
-                # Pass background loaders so make_receipt_label can join
-                # them AFTER the "can you see?" prompt, not before.
-                _accounts_thread=accounts_thread,
-                _accounts_result=_accounts_result,
-                _accounts_error=_accounts_error,
-                _tui_thread=tui_thread,
-            )
+            try:
+                receipt_label: Receipt = make_receipt_label(
+                    config=config,
+                    raw_receipt_img_filepaths=image_group,
+                    cropped_receipt_img_filepath=cropped_receipt_img_filepath,
+                    receipt_nr=receipt_nr,
+                    total_nr_of_receipts=len(image_groups),
+                    labelled_receipts=labelled_receipts,
+                    # Pass background loaders so make_receipt_label can join
+                    # them AFTER the "can you see?" prompt, not before.
+                    _accounts_thread=accounts_thread,
+                    _accounts_result=_accounts_result,
+                    _accounts_error=_accounts_error,
+                    _tui_thread=tui_thread,
+                )
+            except ReceiptNotMine as not_mine:
+                # The user chose "This receipt is not mine" in the matching
+                # menu of the labelling TUI (tui-image-labeller raises this).
+                # The receipt leaves the bookkeeping folders for the
+                # training dataset; no label is made, on to the next one.
+                handle_receipt_not_mine(
+                    config=config,
+                    raw_receipt_img_filepaths=image_group,
+                    partial_answers=not_mine.partial_answers,
+                    label_folder_path=receipt_folder_path,
+                )
+                _loop_prev = _loop_time.monotonic()
+                continue
             # Map ALL images in the group to the same receipt.
             for img_path in image_group:
                 receipts[img_path] = receipt_label
@@ -499,20 +517,23 @@ def make_receipt_label(
             _accounts_result[0]
         )
 
-    receipt: Receipt = ask_questions(
-        config=config,
-        hledger_account_infos=hledger_account_infos,
-        labelled_receipts=labelled_receipts,
-        raw_receipt_img_filepaths=raw_receipt_img_filepaths,
-        prefilled_receipt=prefilled_receipt,
-        csv_transactions_per_account=csv_transactions_per_account,
-    )
+    try:
+        receipt: Receipt = ask_questions(
+            config=config,
+            hledger_account_infos=hledger_account_infos,
+            labelled_receipts=labelled_receipts,
+            raw_receipt_img_filepaths=raw_receipt_img_filepaths,
+            prefilled_receipt=prefilled_receipt,
+            csv_transactions_per_account=csv_transactions_per_account,
+        )
+    finally:
+        # Also when the questionnaire is abandoned ("This receipt is not
+        # mine" raises ReceiptNotMine): do not leave the image window open.
+        if not _headless and plt is not None:
+            plt.close()
+            plt.ioff()
+        if not _headless and root is not None:
+            root.destroy()  # TODO: See if you can delete.
     _t2 = _time.monotonic()
     print(f"  [timing] ask_questions (total): {_t2 - _t1:.1f}s")
-
-    if not _headless and plt is not None:
-        plt.close()
-        plt.ioff()
-    if not _headless and root is not None:
-        root.destroy()  # TODO: See if you can delete.
     return receipt

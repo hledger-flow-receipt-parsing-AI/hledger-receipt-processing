@@ -65,7 +65,11 @@ class ReceiptMatchingAction(Enum):
     CHECK_TRANSACTIONS = "3"
     WIDEN_DATE = "4"
     WIDEN_AMOUNT = "5"
-    SWAP_DAY_AND_MONTH = "6"
+    # Only offered while labelling (see get_receipt_action): the receipt and
+    # everything known about it move to the training dataset.
+    NOT_MINE = "6"
+    # Not listed in the menu.  It was number 6 until "not mine" took it.
+    SWAP_DAY_AND_MONTH = "7"
 
 
 class ActionValuePair:
@@ -223,13 +227,17 @@ def get_receipt_action(
     account: Account,
     search_receipt_account_transaction: AccountTransaction,
     receipt: Receipt,
+    allow_not_mine: bool = False,
 ) -> ReceiptMatchingAction:
     """
     Prompts the user to select an action for a receipt with no matches found and returns the corresponding action.
-    Re-prompts if the input is not a valid number (1-5).
+    Re-prompts if the input is not a valid number.
 
     Args:
         account_key (str): The account identifier to display in the prompt.
+        allow_not_mine: also offer "6. This receipt is not mine".  Only the
+            labelling TUI (tui-image-labeller) passes True: it can abandon
+            the receipt it is asking about; the later matching stage cannot.
 
     Returns:
         ReceiptMatchingAction: The selected action as an Enum value.
@@ -241,20 +249,31 @@ def get_receipt_action(
     prompt = (
         "\nNo matches found for the above transaction in a receipt of:\n  "
         f"  {receipt.the_date}\nfrom account:\n    {account_key}.\nPlease"
-        " select an action (enter a number 1-5):\n\n1. Add estimated"
+        f" select an action (enter a number 1-{6 if allow_not_mine else 5}):"
+        "\n\n1. Add estimated"
         " conversion rate for alternative currency.\n2. Check if the"
         " receipt is correct\n3. Check if transactions for this account"
         " are up to date\n4. Widen the date margin\n5. Widen the amount"
         " margin\n"
     )
+    if allow_not_mine:
+        prompt += (
+            "6. This receipt is not mine (move it to the training dataset)\n"
+        )
+    accepted = [
+        action.value
+        for action in ReceiptMatchingAction
+        if allow_not_mine or action != ReceiptMatchingAction.NOT_MINE
+    ]
 
     while True:
         user_input = input(prompt).strip()
-        if user_input.isdigit() and user_input in [
-            e.value for e in ReceiptMatchingAction
-        ]:
+        if user_input.isdigit() and user_input in accepted:
             return ReceiptMatchingAction(user_input)
-        print("Invalid input. Please enter a number between 1 and 6.")
+        print(
+            "Invalid input. Please enter a number between 1 and"
+            f" {6 if allow_not_mine else 5}."
+        )
 
 
 @typechecked
