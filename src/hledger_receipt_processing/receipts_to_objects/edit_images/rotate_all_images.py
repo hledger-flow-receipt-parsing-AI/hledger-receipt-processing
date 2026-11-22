@@ -11,8 +11,16 @@ from typeguard import typechecked
 
 from hledger_config.config.Config import Config
 from hledger_config.config.ReceiptImgConfig import ReceiptImgConfig
+from hledger_receipt_processing.receipts_to_objects.edit_images.gui_environment import (  # noqa: E501
+    assert_image_editing_environment,
+)
+from hledger_receipt_processing.receipts_to_objects.edit_images.receipt_window import (  # noqa: E501
+    receipt_window_session,
+    show_receipt_image,
+)
 
 
+@receipt_window_session()
 @typechecked
 def rotate_and_save_image(
     *,
@@ -68,9 +76,10 @@ def rotate_and_save_image(
     # Initial resize for display
     display_image = resize_to_fit(cv_image, max_width, max_height)
 
-    # Create and resize OpenCV window
-    cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Image", display_image.shape[1], display_image.shape[0])
+    title = (
+        f"Rotate {Path(image_path).name}: r/l rotate, Backspace undo,"
+        " Enter save"
+    )
 
     # Display instructions
     print(
@@ -81,8 +90,8 @@ def rotate_and_save_image(
 
     try:
         while True:
-            # Display the resized image
-            cv2.imshow("Image", display_image)
+            # Display the resized image in the shared receipt window
+            show_receipt_image(image=display_image, title=title)
             key = cv2.waitKey(0) & 0xFF  # Wait for a keypress
 
             if key == 13:  # Enter key
@@ -137,18 +146,13 @@ def rotate_and_save_image(
                 cv_image = cv2.cvtColor(
                     np.array(pil_image_rotated), cv2.COLOR_RGB2BGR
                 )
+            # The window is not resized to the rotated image: it keeps the
+            # size and place the user gave it (the image is letterboxed).
             display_image = resize_to_fit(cv_image, max_width, max_height)
-            # Update window size if image dimensions change after rotation
-            cv2.resizeWindow(
-                "Image", display_image.shape[1], display_image.shape[0]
-            )
 
     except Exception as e:
         print(f"An error occurred: {e}")
         return False
-    finally:
-        # Clean up OpenCV windows
-        cv2.destroyAllWindows()
     return rotation_angle
 
 
@@ -160,11 +164,15 @@ from typing import List
 from typeguard import typechecked
 
 
+@receipt_window_session()
 @typechecked
 def rotate_images(
     *, raw_receipt_img_filepaths: List[str], config: "Config"
 ) -> None:
     """Rotate images and save metadata with rotation angle, skipping already rotated images if rotated image exists."""
+    assert_image_editing_environment(
+        raw_receipt_img_filepaths=raw_receipt_img_filepaths, config=config
+    )
     current_index = 0
     receipt_img_filenames: ReceiptImgConfig = config.file_names.receipt_img
     while current_index < len(raw_receipt_img_filepaths):

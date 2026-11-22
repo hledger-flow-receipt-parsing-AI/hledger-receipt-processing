@@ -15,6 +15,13 @@ from hledger_core.generics.enums import EnumEncoder
 from hledger_receipt_processing.receipts_to_objects.edit_images.drawing import (
     draw_crop_overlay,
 )
+from hledger_receipt_processing.receipts_to_objects.edit_images.gui_environment import (  # noqa: E501
+    assert_image_editing_environment,
+)
+from hledger_receipt_processing.receipts_to_objects.edit_images.receipt_window import (  # noqa: E501
+    receipt_window_session,
+    show_receipt_image,
+)
 from hledger_core.TransactionObjects.Receipt import (  # For image handling
     ExchangedItem,
     Receipt,
@@ -42,6 +49,7 @@ def _special_key(key: int) -> Union[str, None]:
     return _SPECIAL_KEYS.get(key & 0xFFFF) or _SPECIAL_KEYS.get(key & 0xFF0000)
 
 
+@receipt_window_session()
 def crop_and_save_image(
     *,
     image_path: str,
@@ -106,9 +114,9 @@ def crop_and_save_image(
 
     display_image = resize_to_fit(cv_image, max_width, max_window_height)
 
-    cv2.namedWindow("Crop Image", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(
-        "Crop Image", display_image.shape[1], display_image.shape[0]
+    title = (
+        f"Crop {Path(image_path).name}: arrows move corner, Alt/Tab switch"
+        " corner, Enter save"
     )
 
     print(
@@ -140,7 +148,7 @@ def crop_and_save_image(
                 (0, 255, 0),
                 1,
             )
-            cv2.imshow("Crop Image", display_with_crop)
+            show_receipt_image(image=display_with_crop, title=title)
 
             key = cv2.waitKeyEx(0)
             key_code = key & 0xFFFF
@@ -259,17 +267,19 @@ def crop_and_save_image(
     except Exception as e:
         print(f"An error occurred: {e}")
         return False
-    finally:
-        cv2.destroyAllWindows()
 
     return crop_coords
 
 
+@receipt_window_session()
 @typechecked
 def crop_images(
     *, raw_receipt_img_filepaths: List[str], config: "Config"
 ) -> None:
     """Crop images and save metadata with crop coordinates, ensuring images are rotated first."""
+    assert_image_editing_environment(
+        raw_receipt_img_filepaths=raw_receipt_img_filepaths, config=config
+    )
     current_index = 0
     while current_index < len(raw_receipt_img_filepaths):
         raw_receipt_img_filepath = raw_receipt_img_filepaths[current_index]

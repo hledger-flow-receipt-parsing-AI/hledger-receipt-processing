@@ -239,8 +239,13 @@ def interactive_group_images(
     from matplotlib import pyplot as plt
     from PIL import Image
 
+    from hledger_receipt_processing.receipts_to_objects.edit_images.gui_environment import (  # noqa: E501
+        assert_grouping_environment,
+    )
+
     if not image_paths:
         return []
+    assert_grouping_environment()
 
     groups: List[List[str]] = []
     current_group: List[str] = []
