@@ -1,13 +1,12 @@
 import copy
 import json
 import os
-import sys
 import threading
 import tkinter as tk
 from dataclasses import asdict
 from datetime import datetime
 from pprint import pprint
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from typeguard import typechecked
 
@@ -46,8 +45,13 @@ from hledger_receipt_processing.receipts_to_objects.receipt_not_mine import (
     ReceiptNotMine,
     handle_receipt_not_mine,
 )
+from hledger_receipt_processing.receipts_to_objects.receipt_preview import (
+    receipt_preview_session,
+    show_receipt_preview,
+)
 
 
+@receipt_preview_session()
 @typechecked
 def manually_make_receipt_labels(
     *,
@@ -247,6 +251,9 @@ def ask_questions(
     csv_transactions_per_account: Optional[
         Dict[AccountConfig, Dict[int, List[Transaction]]]
     ] = None,
+    # Draws the evidence of the AI suggestions on the receipt preview
+    # (receipt_highlights.ReceiptHighlighter); None: no boxes.
+    highlighter: Any = None,
 ) -> Receipt:
     """Asks the relevant questions to the user about the receipt to generate
     the labels."""
@@ -272,6 +279,7 @@ def ask_questions(
         labelled_receipts=labelled_receipts,
         prefilled_receipt=prefilled_receipt,
         csv_transactions_per_account=csv_transactions_per_account,
+        highlighter=highlighter,
     )
 
 
@@ -398,6 +406,7 @@ def export_human_label(
         json.dump(receipt_dict, f, indent=4, cls=EnumEncoder)
 
 
+@receipt_preview_session()
 @typechecked
 def make_receipt_label(
     *,
@@ -440,6 +449,10 @@ def make_receipt_label(
     # answering — so skipping it does not change the produced label.  The
     # "Can you see …" prompt is kept so pexpect-driven runs (tests, GIF
     # recording) advance through exactly the same steps.
+    #
+    # The preview window is shared by all receipts of the labelling loop
+    # (receipt_preview_session): it keeps the place and size the user gave
+    # it, and only the photo in it changes from receipt to receipt.
     _headless: bool = bool(os.environ.get("HLEDGER_PREPROCESSOR_HEADLESS"))
 
     _img_t0 = _time.monotonic()
@@ -453,47 +466,33 @@ def make_receipt_label(
             f" path: {raw_receipt_img_filepaths[0]}"
         )
 
-    plt = None
     root = None
+    highlighter = None
     if not _headless:
-        import numpy as np
-        from matplotlib import pyplot as plt
-        from PIL import Image
+        figure, axes = show_receipt_preview(
+            image_path=cropped_receipt_img_filepath
+        )
 
-        _img_t1 = _time.monotonic()
-        with Image.open(cropped_receipt_img_filepath) as pil_img:
-            img_array = np.asarray(pil_img.convert("RGB"))
+        # Boxes on the preview around the text behind the focused
+        # question's AI suggestion (--no-receipt-highlights or Alt+h turns
+        # them off).
+        from hledger_receipt_processing.receipts_to_objects.receipt_highlights import (  # noqa: E501
+            ReceiptHighlighter,
+        )
 
-        _img_t2 = _time.monotonic()
-
-        plt.style.use("dark_background")
-        plt.ion()
-
-        plt.figure()
-        plt.imshow(img_array, origin="upper")
-        plt.title(f"Answer the questions about this receipt in the CLI/TUI")
-        plt.axis("off")
-        plt.subplots_adjust(bottom=0, top=1, left=0, right=1)
-
-        # Maximize the figure window
-        fig_manager = plt.get_current_fig_manager()
-        # Tk on Windows has no "-zoomed" attribute (TclError); it uses state.
-        if sys.platform == "win32":
-            fig_manager.window.state("zoomed")
-        else:
-            fig_manager.window.attributes("-zoomed", True)
+        highlighter = ReceiptHighlighter(
+            figure=figure,
+            axes=axes,
+            image_path=cropped_receipt_img_filepath,
+            enabled=getattr(config, "_receipt_highlights", True),
+        )
 
         # Allow closing the image afterwards.
         root = tk.Tk()  # TODO: See if you can delete.
         root.withdraw()  # TODO: See if you can delete.
 
-        _img_t3 = _time.monotonic()
-        print(
-            f"  [timing] image display: imports={_img_t1 - _img_t0:.1f}s"
-            f" img_load={_img_t2 - _img_t1:.1f}s"
-            f" matplotlib={_img_t3 - _img_t2:.1f}s"
-            f" total={_img_t3 - _img_t0:.1f}s"
-        )
+        _img_t1 = _time.monotonic()
+        print(f"  [timing] image display: {_img_t1 - _img_t0:.1f}s")
 
     input(
         f"({receipt_nr}/{total_nr_of_receipts}) Can you"
@@ -530,13 +529,15 @@ def make_receipt_label(
             raw_receipt_img_filepaths=raw_receipt_img_filepaths,
             prefilled_receipt=prefilled_receipt,
             csv_transactions_per_account=csv_transactions_per_account,
+            highlighter=highlighter,
         )
     finally:
         # Also when the questionnaire is abandoned ("This receipt is not
-        # mine" raises ReceiptNotMine): do not leave the image window open.
-        if not _headless and plt is not None:
-            plt.close()
-            plt.ioff()
+        # mine" raises ReceiptNotMine): this receipt's boxes must not come
+        # back on the next photo.  The window itself stays open for the
+        # next receipt; the outermost receipt_preview_session closes it.
+        if highlighter is not None:
+            highlighter.detach()
         if not _headless and root is not None:
             root.destroy()  # TODO: See if you can delete.
     _t2 = _time.monotonic()
