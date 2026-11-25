@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 from hledger_config.config.AccountConfig import AccountConfig
 from hledger_config.config.load_config import Config
@@ -54,7 +54,18 @@ def manage_matching_receipts_to_transactions(
         json_paths_receipt_objs=json_paths_receipt_objs,
     )
 
-    for img_label_filepath, receipt in json_paths_receipt_objs.items():
+    # A receipt can arrive here under several image paths: every image of a
+    # multi-image receipt maps to it, and separate image groups can resolve
+    # to the same label file. Linking saves the label file, whose location
+    # follows from the primary image, so match each label once. A second
+    # pass would use the stale in-memory receipt and re-link what was just
+    # saved.
+    matched_primary_imgs: Set[str] = set()
+    for img_filepath, receipt in json_paths_receipt_objs.items():
+        primary_img: str = receipt.raw_img_filepath or img_filepath
+        if primary_img in matched_primary_imgs:
+            continue
+        matched_primary_imgs.add(primary_img)
         match_receipt_items_to_csv_transactions(
             receipt=receipt,
             labelled_receipts=labelled_receipts,
@@ -63,7 +74,7 @@ def manage_matching_receipts_to_transactions(
             config=config,
             ai_models_tnx_classification=models[
                 ClassifierType.TRANSACTION_CATEGORY
-            ][LogicType.AI],
+            ].get(LogicType.AI, []),
             rule_based_models_tnx_classification=models[
                 ClassifierType.TRANSACTION_CATEGORY
             ][LogicType.RULE_BASED],
