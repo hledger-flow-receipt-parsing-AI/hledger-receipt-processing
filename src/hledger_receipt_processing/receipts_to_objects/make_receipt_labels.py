@@ -408,6 +408,13 @@ def make_receipt_label(
     total_nr_of_receipts: int,
     labelled_receipts: List[Receipt],
     prefilled_receipt: Optional[Receipt] = None,
+    # Accounts that the caller has already loaded (--edit-receipt, the
+    # "check receipt" matching action).  The labelling loop passes the
+    # background loaders below instead.
+    hledger_account_infos: Optional[set[HledgerFlowAccountInfo]] = None,
+    csv_transactions_per_account: Optional[
+        Dict[AccountConfig, Dict[int, List[Transaction]]]
+    ] = None,
     # Background loaders — joined AFTER the "can you see?" prompt so the
     # user's inspection time overlaps with loading.
     _accounts_thread: Optional[threading.Thread] = None,
@@ -508,14 +515,12 @@ def make_receipt_label(
     _t1 = _time.monotonic()
     print(f"  [timing] background joins: {_t1 - _t0:.1f}s")
 
-    hledger_account_infos: set[HledgerFlowAccountInfo] = set()
-    csv_transactions_per_account: Optional[
-        Dict[AccountConfig, Dict[int, List[Transaction]]]
-    ] = None
     if _accounts_result:
         hledger_account_infos, csv_transactions_per_account = (
             _accounts_result[0]
         )
+    if hledger_account_infos is None:
+        hledger_account_infos = set()
 
     try:
         receipt: Receipt = ask_questions(
