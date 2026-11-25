@@ -130,6 +130,8 @@ def load_image_grouping(*, config: Config) -> Optional[List[List[str]]]:
     # images have been removed.
     cleaned: List[List[str]] = []
     stale_count = 0
+    repeated_count = 0
+    seen: set = set()
     for group in groups:
         valid = [p for p in group if os.path.isfile(p)]
         removed = len(group) - len(valid)
@@ -138,11 +140,20 @@ def load_image_grouping(*, config: Config) -> Optional[List[List[str]]]:
             for p in group:
                 if not os.path.isfile(p):
                     log.warning("Stale grouping entry removed: %s", p)
-        if valid:
-            cleaned.append(valid)
+        # An image belongs to one receipt: keep its first group only.
+        unseen = [p for p in valid if p not in seen]
+        repeated_count += len(valid) - len(unseen)
+        seen.update(unseen)
+        if unseen:
+            cleaned.append(unseen)
     if stale_count:
         log.info(
             "Removed %d stale path(s) from saved grouping.", stale_count
+        )
+    if repeated_count:
+        log.warning(
+            "Removed %d path(s) already listed in an earlier group.",
+            repeated_count,
         )
     if not cleaned:
         return None
@@ -208,33 +219,48 @@ def auto_group_by_hash(
 
 
 class _GroupingAborted(Exception):
-    """Raised when the user quits the interactive grouping session."""
+    """Raised when the user quits the interactive grouping session.
+
+    ``groups`` holds the groups decided before quitting.
+    """
+
+    def __init__(self, groups: List[List[str]]) -> None:
+        super().__init__("grouping aborted")
+        self.groups = groups
 
 
 @typechecked
 def interactive_group_images(
-    *, config: Config, image_paths: List[str]
+    *,
+    config: Config,
+    image_paths: List[str],
+    keep_groups: Optional[List[List[str]]] = None,
 ) -> List[List[str]]:
-    """Show images one-by-one and let the user group them interactively.
+    """Show images in pairs and let the user group them interactively.
+
+    The first image starts the first group, so the first question already
+    compares two images: the current group's prime (left) and the next
+    image (right).  Every question reuses one window, so a maximised or
+    resized window keeps its size, position and focus.
 
     Keyboard shortcuts are captured directly on the matplotlib figure
     window so the user does not need to alt-tab to the terminal.
 
     Keys
     ----
-    n — new receipt (start a new group with this image as prime)
-    g — group with previous (add to current group as secondary)
-    p — prime & group (add to current group AND make this image the prime)
-    x — skip / exclude this image
-    q / Escape — quit (abort grouping, save progress so far)
+    n — new receipt (the right image starts a new group as its prime)
+    g — group with previous (add the right image to the current group)
+    p — prime & group (add it to the current group AND make it the prime)
+    x — exclude the right image (skip it)
+    q / Escape — quit (stop grouping, keep the decisions made so far)
 
-    Grouping is saved to disk after every decision so progress survives
-    interruption (Ctrl-C).
+    After every decision ``keep_groups`` plus the groups so far are saved,
+    so progress survives interruption (Ctrl-C).
 
     Returns a list of groups.  Index 0 in each group is the prime image.
 
-    Raises ``_GroupingAborted`` if the user presses q/Escape or closes
-    the window.
+    Raises ``_GroupingAborted`` (carrying the groups so far) if the user
+    presses q/Escape or closes the window.
     """
     from matplotlib import pyplot as plt
     from PIL import Image
@@ -245,10 +271,12 @@ def interactive_group_images(
 
     if not image_paths:
         return []
-    assert_grouping_environment()
-
     groups: List[List[str]] = []
-    current_group: List[str] = []
+    current_group: List[str] = [image_paths[0]]
+    if len(image_paths) == 1:
+        # Nothing to compare it with: it is its own receipt.
+        return [current_group]
+    assert_grouping_environment()
 
     def _display_path(raw_path: str) -> str:
         """Return the cropped image path if available, else the raw path."""
@@ -257,120 +285,100 @@ def interactive_group_images(
         )
         return cropped if os.path.isfile(cropped) else raw_path
 
-    for idx, img_path in enumerate(image_paths):
-        display_file = _display_path(img_path)
-        img = Image.open(display_file)
+    def _show(ax, raw_path: str, title: str) -> None:
+        with Image.open(_display_path(raw_path)) as img:
+            ax.imshow(img)
+        ax.set_title(title, color="white", fontsize=10)
+        ax.axis("off")
 
-        fig, axes = plt.subplots(1, 2 if current_group else 1, figsize=(16, 10))
-        fig.patch.set_facecolor("black")
+    fig = plt.figure(figsize=(16, 10))
+    fig.patch.set_facecolor("black")
+    help_text = "  |  ".join(
+        [
+            "(n)ew receipt",
+            "(g)roup with prev",
+            "(p)rime & group",
+            "e(x)clude  |  (q)uit",
+        ]
+    )
 
-        if current_group:
-            # Show current group's prime (cropped) on the left
-            ax_prev = axes[0]
-            prime_display = _display_path(current_group[0])
-            prime_img = Image.open(prime_display)
-            ax_prev.imshow(prime_img)
-            ax_prev.set_title(
-                f"Current group prime ({len(current_group)} img(s))\n"
-                f"{os.path.basename(current_group[0])}",
-                color="white",
-                fontsize=10,
-            )
-            ax_prev.axis("off")
-            ax_new = axes[1]
-        else:
-            ax_new = axes if not hasattr(axes, '__len__') else axes[0]
+    key_result: List[Optional[str]] = [None]
 
-        ax_new.imshow(img)
-        ax_new.set_title(
-            f"[{idx + 1}/{len(image_paths)}] {os.path.basename(img_path)}",
-            color="white",
-            fontsize=10,
-        )
-        ax_new.axis("off")
+    def _on_key(event) -> None:
+        key = event.key.lower() if event.key else ""
+        if key == "escape":
+            key = "q"
+        if key in ("n", "g", "p", "x", "q"):
+            key_result[0] = key
 
-        # Build help text overlay on the figure
-        help_parts = ["(n)ew receipt"]
-        if current_group:
-            help_parts += ["(g)roup with prev", "(p)rime & group"]
-        help_parts.append("e(x)clude  |  (q)uit")
-        help_text = "  |  ".join(help_parts)
+    fig.canvas.mpl_connect("key_press_event", _on_key)
 
-        fig.text(
-            0.5, 0.02, help_text,
-            ha="center", va="bottom", fontsize=14,
-            color="yellow", fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.4", fc="black", alpha=0.8),
-        )
+    # The window stays open between questions, so matplotlib's own
+    # p (pan mode) and g (grid) shortcuts would otherwise stick.
+    try:
+        with plt.rc_context({"keymap.pan": [], "keymap.grid": []}):
+            for idx in range(1, len(image_paths)):
+                img_path = image_paths[idx]
+                fig.clf()
+                ax_prev, ax_new = fig.subplots(1, 2)
+                _show(
+                    ax_prev,
+                    current_group[0],
+                    f"Current group prime ({len(current_group)} img(s))\n"
+                    f"{os.path.basename(current_group[0])}",
+                )
+                _show(
+                    ax_new,
+                    img_path,
+                    f"[{idx + 1}/{len(image_paths)}]"
+                    f" {os.path.basename(img_path)}",
+                )
+                fig.text(
+                    0.5, 0.02, help_text,
+                    ha="center", va="bottom", fontsize=14,
+                    color="yellow", fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.4", fc="black", alpha=0.8),
+                )
+                fig.tight_layout(rect=[0, 0.06, 1, 1])
+                fig.canvas.draw_idle()
+                if idx == 1:
+                    plt.show(block=False)
 
-        plt.tight_layout(rect=[0, 0.06, 1, 1])
+                # Block until the user presses a valid key.
+                key_result[0] = None
+                while key_result[0] is None and plt.fignum_exists(
+                    fig.number
+                ):
+                    plt.pause(0.05)
+                choice = key_result[0]
 
-        # Capture key press on the matplotlib figure window directly —
-        # no need to alt-tab to the terminal.
-        key_result: List[Optional[str]] = [None]
+                if choice is None:  # window closed (Alt-F4, X button)
+                    print("\nGrouping aborted (window closed).")
+                    raise _GroupingAborted(groups + [current_group])
+                if choice == "q":
+                    print("\nGrouping aborted by user.")
+                    raise _GroupingAborted(groups + [current_group])
 
-        def _on_key(event, _current_group=current_group):
-            key = event.key.lower() if event.key else ""
-            # q and escape always quit
-            if key in ("q", "escape"):
-                key_result[0] = "q"
-                plt.close(fig)
-                return
-            valid = {"n", "x"}
-            if _current_group:
-                valid |= {"g", "p"}
-            if key in valid:
-                key_result[0] = key
-                plt.close(fig)
+                if choice == "n":
+                    groups.append(current_group)
+                    current_group = [img_path]
+                elif choice == "g":
+                    current_group.append(img_path)
+                elif choice == "p":
+                    current_group.insert(0, img_path)
+                elif choice == "x":
+                    log.info("Excluded: %s", os.path.basename(img_path))
+                    print(f"  Excluded: {os.path.basename(img_path)}")
 
-        fig.canvas.mpl_connect("key_press_event", _on_key)
+                # Save after every decision so progress survives Ctrl-C
+                save_image_grouping(
+                    config=config,
+                    groups=(keep_groups or []) + groups + [current_group],
+                )
+    finally:
+        plt.close(fig)
 
-        plt.ion()
-        plt.show()
-
-        # Block until the user presses a valid key (closes the figure)
-        while key_result[0] is None and plt.fignum_exists(fig.number):
-            plt.pause(0.05)
-
-        plt.ioff()
-
-        # Window closed without a key press (Alt-F4, X button) → abort
-        if key_result[0] is None:
-            if current_group:
-                groups.append(current_group)
-            print("\nGrouping aborted (window closed).")
-            raise _GroupingAborted()
-
-        choice = key_result[0]
-
-        # q/Escape → abort
-        if choice == "q":
-            if current_group:
-                groups.append(current_group)
-            print("\nGrouping aborted by user.")
-            raise _GroupingAborted()
-
-        if choice == "n":
-            if current_group:
-                groups.append(current_group)
-            current_group = [img_path]
-        elif choice == "g":
-            current_group.append(img_path)
-        elif choice == "p":
-            current_group.insert(0, img_path)
-        elif choice == "x":
-            log.info("Excluded: %s", os.path.basename(img_path))
-            print(f"  Excluded: {os.path.basename(img_path)}")
-
-        # Save after every decision so progress survives Ctrl-C
-        partial = groups + ([current_group] if current_group else [])
-        save_image_grouping(config=config, groups=partial)
-
-    # Don't forget the last group
-    if current_group:
-        groups.append(current_group)
-
-    return groups
+    return groups + [current_group]
 
 
 # ------------------------------------------------------------------
@@ -427,6 +435,19 @@ def group_receipt_images(
                 f"  Group {i + 1}: {[os.path.basename(p) for p in group]}"
             )
 
+    # Saved groups of images outside this run stay in the file, also in
+    # the saves made after every interactive decision.
+    being_grouped = set(image_paths)
+    kept_groups = [
+        kept
+        for kept in (
+            [p for p in group if p not in being_grouped]
+            for group in load_image_grouping(config=config) or []
+        )
+        if kept
+    ]
+    decided_groups = [[img] for img in already_labelled] + duplicate_groups
+
     # Phase 2: interactive grouping of remaining unique images
     interactive_groups: List[List[str]] = []
     aborted = False
@@ -438,29 +459,19 @@ def group_receipt_images(
         print("  (p)rime & group, e(x)clude, (q)uit/Esc.\n")
         try:
             interactive_groups = interactive_group_images(
-                config=config, image_paths=unique_images
+                config=config,
+                image_paths=unique_images,
+                keep_groups=kept_groups + decided_groups,
             )
-        except _GroupingAborted:
+        except _GroupingAborted as aborted_grouping:
             aborted = True
-            # interactive_group_images saves partial progress via
-            # save_image_grouping on every step, so whatever the user
-            # completed is already on disk.  Reload it.
-            saved = load_image_grouping(config=config)
-            if saved is not None:
-                # Return saved partial progress as-is (includes any
-                # already-labelled singletons that were persisted).
-                print(f"Returning {len(saved)} group(s) from partial save.")
-                return saved
+            interactive_groups = aborted_grouping.groups
 
     # Combine: already-labelled as singletons + auto-groups + interactive
-    all_groups = (
-        [[img] for img in already_labelled]
-        + duplicate_groups
-        + interactive_groups
-    )
+    all_groups = decided_groups + interactive_groups
 
     # Persist final result
-    save_image_grouping(config=config, groups=all_groups)
+    save_image_grouping(config=config, groups=kept_groups + all_groups)
 
     n_new = len(duplicate_groups) + len(interactive_groups)
     status = " (aborted early)" if aborted else ""
