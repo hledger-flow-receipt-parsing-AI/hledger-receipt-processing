@@ -69,6 +69,12 @@ def manually_make_receipt_labels(
     """
     receipts: Dict[str, Receipt] = {}
 
+    # The receipts the questionnaire knows (shop address list, categories
+    # per shop): those labelled before this run plus every receipt labelled
+    # in it, so a shop entered by hand on one receipt is in the address
+    # list of the next.  A copy: the caller's list stays as it was given.
+    known_receipts: List[Receipt] = list(labelled_receipts)
+
     # Pre-load account data AND the heavy TUI module tree in background
     # threads so they are ready by the time the user finishes looking at
     # the receipt image.  Both tasks run concurrently while the image is
@@ -111,6 +117,16 @@ def manually_make_receipt_labels(
     # This scans label JSONs instead of hashing every cropped image,
     # and handles stale hashes from re-cropped images.
     labelled_map = build_labelled_raw_paths(config=config)
+
+    # A receipt can be skipped for now (Alt+s in the questionnaire, after a
+    # red "Are you sure?"); an older tui-image-labeller has no such option.
+    try:
+        from tui_labeller.tuis.urwid.skip_receipt import ReceiptSkipped
+
+        can_skip = True
+    except ImportError:
+        ReceiptSkipped = _NeverRaised  # noqa: N806
+        can_skip = False
 
     _loop_prev = _loop_time.monotonic()
     for receipt_nr, image_group in enumerate(image_groups):
@@ -188,14 +204,25 @@ def manually_make_receipt_labels(
                     cropped_receipt_img_filepath=cropped_receipt_img_filepath,
                     receipt_nr=receipt_nr,
                     total_nr_of_receipts=len(image_groups),
-                    labelled_receipts=labelled_receipts,
+                    labelled_receipts=known_receipts,
                     # Pass background loaders so make_receipt_label can join
                     # them AFTER the "can you see?" prompt, not before.
                     _accounts_thread=accounts_thread,
                     _accounts_result=_accounts_result,
                     _accounts_error=_accounts_error,
                     _tui_thread=tui_thread,
+                    allow_skip=can_skip,
                 )
+            except ReceiptSkipped:
+                # Not now: no label, so the receipt comes back the next time
+                # receipts are labelled.
+                print(
+                    f"Skipped receipt {receipt_nr}/{len(image_groups)}"
+                    f" ({os.path.basename(primary_img)}); it stays"
+                    " unlabelled for now."
+                )
+                _loop_prev = _loop_time.monotonic()
+                continue
             except ReceiptNotMine as not_mine:
                 # The user chose "This receipt is not mine" in the matching
                 # menu of the labelling TUI (tui-image-labeller raises this).
@@ -212,6 +239,7 @@ def manually_make_receipt_labels(
             # Map ALL images in the group to the same receipt.
             for img_path in image_group:
                 receipts[img_path] = receipt_label
+            known_receipts.append(receipt_label)
             # Store the manually generated receipt label.
             _t_export_start = _loop_time.monotonic()
             export_human_label(
@@ -254,6 +282,8 @@ def ask_questions(
     # Draws the evidence of the AI suggestions on the receipt preview
     # (receipt_highlights.ReceiptHighlighter); None: no boxes.
     highlighter: Any = None,
+    # Offer to skip the receipt for now (raises the TUI's ReceiptSkipped).
+    allow_skip: bool = False,
 ) -> Receipt:
     """Asks the relevant questions to the user about the receipt to generate
     the labels."""
@@ -280,7 +310,14 @@ def ask_questions(
         prefilled_receipt=prefilled_receipt,
         csv_transactions_per_account=csv_transactions_per_account,
         highlighter=highlighter,
+        # Only when asked: a tui-image-labeller without the option takes
+        # no such argument.
+        **({"allow_skip": True} if allow_skip else {}),
     )
+
+
+class _NeverRaised(Exception):
+    """Stands in for ReceiptSkipped when the TUI cannot skip."""
 
 
 @typechecked
@@ -430,6 +467,8 @@ def make_receipt_label(
     _accounts_result: Optional[List] = None,
     _accounts_error: Optional[List] = None,
     _tui_thread: Optional[threading.Thread] = None,
+    # The labelling loop lets the user skip a receipt for now.
+    allow_skip: bool = False,
 ) -> Receipt:
     """
     Opens an image, asks the user questions about it, and returns the answers.
@@ -530,6 +569,7 @@ def make_receipt_label(
             prefilled_receipt=prefilled_receipt,
             csv_transactions_per_account=csv_transactions_per_account,
             highlighter=highlighter,
+            allow_skip=allow_skip,
         )
     finally:
         # Also when the questionnaire is abandoned ("This receipt is not
